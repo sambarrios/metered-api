@@ -1,0 +1,34 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: metered
+      POSTGRES_PASSWORD: metered
+      POSTGRES_DB: metered
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U metered -d metered"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./apps/api
+    environment:
+      DATABASE_URL: postgres://metered:metered@db:5432/metered
+      WEBHOOK_SIGNING_SECRET: dev-webhook-secret-change-me
+      STAFF_JWT_SECRET: dev-staff-secret-change-me
+      PORT: "3000"
+      NODE_ENV: development
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
