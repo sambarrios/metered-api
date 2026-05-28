@@ -20,6 +20,14 @@ export class Job extends PrefixedEntity {
   @Column({ name: 'scheduled_for', type: 'timestamptz' })
   scheduledFor!: Date;
 
+  /** What to operate on (e.g. { customerId, windowStart } for aggregation). */
+  @Column({ type: 'jsonb', nullable: true })
+  payload!: Record<string, unknown> | null;
+
+  /** Collapses duplicate active work; see uq_jobs_active_dedupe. */
+  @Column({ name: 'dedupe_key', type: 'text', nullable: true })
+  dedupeKey!: string | null;
+
   @Column({ type: 'text', default: 'pending' })
   status!: JobStatus;
 
