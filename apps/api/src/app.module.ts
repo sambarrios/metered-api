@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { dataSourceOptions } from './database/data-source';
+import { AuthModule } from './auth/auth.module';
 import { HealthController } from './health/health.controller';
 import { EventsModule } from './events/events.module';
 import { UsageModule } from './usage/usage.module';
@@ -16,6 +17,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     TypeOrmModule.forRoot(dataSourceOptions),
+    AuthModule,
     EventsModule,
     UsageModule,
     InvoicesModule,
