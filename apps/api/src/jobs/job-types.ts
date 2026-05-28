@@ -7,6 +7,15 @@ export interface AggregateWindowPayload {
   windowStart: string;
 }
 
+/** Generate (or regenerate) a customer's draft invoice for one billing period. */
+export const GENERATE_INVOICE_JOB = 'generate_invoice';
+
+export interface GenerateInvoicePayload {
+  customerId: string;
+  /** ISO timestamp of the billing period start (UTC month boundary). */
+  periodStart: string;
+}
+
 /** A job to enqueue. `dedupeKey` collapses duplicate pending/running work. */
 export interface NewJob {
   type: string;
