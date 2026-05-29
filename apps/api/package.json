@@ -14,6 +14,7 @@
     "test:watch": "jest --watch",
     "test:int": "jest --config test/jest-int.json --runInBand",
     "test:all": "jest && jest --config test/jest-int.json --runInBand",
+    "migration:run:prod": "typeorm migration:run -d dist/database/data-source.js",
     "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/database/data-source.ts",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",

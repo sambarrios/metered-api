@@ -1,0 +1,9 @@
+# Dev-server image for the ops console. Runs Vite with HMR; the dev proxy
+# forwards /ops to the api service (VITE_PROXY_TARGET=http://api:3000).
+FROM node:20-alpine
+WORKDIR /app
+COPY package.json ./
+RUN npm install
+COPY . .
+EXPOSE 5174
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

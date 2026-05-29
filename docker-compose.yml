@@ -30,5 +30,29 @@ services:
       db:
         condition: service_healthy
 
+  # Vite dev server for the customer dashboard. Proxies /v1 to the api service.
+  web-customer:
+    build:
+      context: ./apps/customer-web
+      dockerfile: Dockerfile.dev
+    environment:
+      VITE_PROXY_TARGET: http://api:3000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+  # Vite dev server for the ops console. Proxies /ops to the api service.
+  web-ops:
+    build:
+      context: ./apps/ops-web
+      dockerfile: Dockerfile.dev
+    environment:
+      VITE_PROXY_TARGET: http://api:3000
+    ports:
+      - "5174:5174"
+    depends_on:
+      - api
+
 volumes:
   pgdata:
