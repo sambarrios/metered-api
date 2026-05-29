@@ -1,0 +1,232 @@
+:root {
+  --green-50: #f1f8f3;
+  --green-100: #e1f0e6;
+  --green-200: #c4e3cd;
+  --green-400: #6abf85;
+  --green-500: #3f9e63;
+  --green-600: #2f7d4d;
+  --green-700: #225c39;
+  --ink: #1d2a22;
+  --muted: #5c6b62;
+  --border: #d4e6da;
+  --bg: #f7fbf8;
+  --white: #ffffff;
+  --danger: #b3402f;
+  --warn: #9a6b13;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+a {
+  color: var(--green-600);
+}
+
+.app-header {
+  background: var(--green-600);
+  color: var(--white);
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.app-header h1 {
+  font-size: 18px;
+  margin: 0;
+  font-weight: 600;
+}
+.app-header .sub {
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.container {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 2px solid var(--border);
+  margin-bottom: 20px;
+}
+.tab {
+  background: none;
+  border: none;
+  padding: 10px 18px;
+  font-size: 15px;
+  cursor: pointer;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+}
+.tab.active {
+  color: var(--green-700);
+  border-bottom-color: var(--green-500);
+  font-weight: 600;
+}
+
+.card {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+.card h2 {
+  font-size: 16px;
+  margin: 0 0 4px;
+  color: var(--green-700);
+}
+.card .card-sub {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 16px;
+}
+
+.stat-row {
+  display: flex;
+  gap: 28px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.stat .label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.stat .value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--green-700);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--green-50);
+}
+tr.clickable {
+  cursor: pointer;
+}
+tr.clickable:hover td {
+  background: var(--green-50);
+}
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.badge.paid {
+  background: var(--green-200);
+  color: var(--green-700);
+}
+.badge.issued {
+  background: #fbf0d3;
+  color: var(--warn);
+}
+.badge.draft {
+  background: #e7ece9;
+  color: var(--muted);
+}
+
+button.primary {
+  background: var(--green-600);
+  color: var(--white);
+  border: none;
+  border-radius: 6px;
+  padding: 9px 16px;
+  font-size: 14px;
+  cursor: pointer;
+}
+button.primary:hover {
+  background: var(--green-700);
+}
+button.link {
+  background: none;
+  border: none;
+  color: var(--green-600);
+  cursor: pointer;
+  padding: 0;
+  font-size: 14px;
+}
+
+input.key-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: ui-monospace, monospace;
+}
+
+.notice {
+  padding: 12px 14px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+.notice.error {
+  background: #fbeae7;
+  color: var(--danger);
+  border: 1px solid #f0c9c1;
+}
+.notice.empty {
+  background: var(--green-50);
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  text-align: center;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* SVG usage chart */
+.chart-bar {
+  fill: var(--green-400);
+}
+.chart-bar:hover {
+  fill: var(--green-600);
+}
+.chart-axis {
+  stroke: var(--border);
+}
+.chart-label {
+  fill: var(--muted);
+  font-size: 10px;
+}
