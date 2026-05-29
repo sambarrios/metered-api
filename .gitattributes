@@ -1,0 +1,3 @@
+# Normalize line endings on commit; ensure shell scripts stay LF on checkout
+* text=auto
+*.sh text eol=lf
