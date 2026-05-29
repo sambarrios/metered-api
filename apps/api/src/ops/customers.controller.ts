@@ -8,13 +8,16 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { CurrentStaff } from '../auth/current-staff.decorator';
 import { StaffGuard } from '../auth/staff.guard';
 import { Page, PaginationQueryDto } from '../common/dto/pagination.dto';
 import { CreateCustomerDto, IssueCreditDto } from './ops.dto';
+import { CreditsService } from './credits.service';
 import { OpsCustomersService } from './ops-customers.service';
 import {
   CreatedApiKey,
   CreatedCustomer,
+  CreditResult,
   CustomerDetail,
   CustomerSummary,
 } from './ops.types';
@@ -22,7 +25,10 @@ import {
 @Controller('ops/customers')
 @UseGuards(StaffGuard)
 export class OpsCustomersController {
-  constructor(private readonly customers: OpsCustomersService) {}
+  constructor(
+    private readonly customers: OpsCustomersService,
+    private readonly credits: CreditsService,
+  ) {}
 
   @Get()
   list(@Query() q: PaginationQueryDto): Promise<Page<CustomerSummary>> {
@@ -48,18 +54,18 @@ export class OpsCustomersController {
     return this.customers.createApiKey(id);
   }
 
-  // MOCK issue credit. Next unit: INSERT credits (idempotency_key UNIQUE) +
-  // audit_log row in one tx; second click with same key -> no-op.
+  /**
+   * Issue an account credit. Idempotent on `idempotencyKey` (double-click ->
+   * one credit). The actor is taken from the verified staff token, never the
+   * body, and recorded in the append-only audit_log.
+   */
   @Post(':id/credits')
   @HttpCode(201)
-  issueCredit(@Param('id') id: string, @Body() body: IssueCreditDto) {
-    return {
-      id: 'cr_mock_0001',
-      customerId: id,
-      amountCents: body.amountCents,
-      reason: body.reason,
-      idempotencyKey: body.idempotencyKey,
-      createdAt: new Date().toISOString(),
-    };
+  issueCredit(
+    @Param('id') id: string,
+    @Body() body: IssueCreditDto,
+    @CurrentStaff() actor: string,
+  ): Promise<CreditResult> {
+    return this.credits.issue(id, body, actor);
   }
 }

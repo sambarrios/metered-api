@@ -6,6 +6,7 @@ import { UsageWindow } from '../database/entities/usage-window.entity';
 import { InvoicesModule } from '../invoices/invoices.module';
 import { OpsCustomersController } from './customers.controller';
 import { OpsInvoicesController } from './ops-invoices.controller';
+import { CreditsService } from './credits.service';
 import { OpsCustomersService } from './ops-customers.service';
 
 @Module({
@@ -14,6 +15,6 @@ import { OpsCustomersService } from './ops-customers.service';
     InvoicesModule,
   ],
   controllers: [OpsCustomersController, OpsInvoicesController],
-  providers: [OpsCustomersService],
+  providers: [OpsCustomersService, CreditsService],
 })
 export class OpsModule {}

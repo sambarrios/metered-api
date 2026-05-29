@@ -36,6 +36,17 @@ export interface CreatedCustomer {
   createdAt: string;
 }
 
+export interface CreditResult {
+  id: string;
+  customerId: string;
+  amountCents: number;
+  reason: string;
+  idempotencyKey: string;
+  createdAt: string;
+  /** True when the idempotency key already existed — the credit was not re-issued. */
+  deduplicated: boolean;
+}
+
 export interface CreatedApiKey {
   id: string;
   customerId: string;
