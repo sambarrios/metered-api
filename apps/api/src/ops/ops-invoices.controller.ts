@@ -1,33 +1,27 @@
 import { Body, Controller, Param, Patch, UseGuards } from '@nestjs/common';
+import { CurrentStaff } from '../auth/current-staff.decorator';
 import { StaffGuard } from '../auth/staff.guard';
 import { OverrideLineItemDto } from './ops.dto';
+import { OpsInvoicesService } from './ops-invoices.service';
+import { OverrideResult } from './ops.types';
 
 @Controller('ops/invoices')
 @UseGuards(StaffGuard)
 export class OpsInvoicesController {
-  // MOCK line-item override. Phase 3: UPDATE line item + INSERT immutable
-  // audit_log (actor, before/after, reason) in one tx; recompute invoice total.
+  constructor(private readonly invoices: OpsInvoicesService) {}
+
+  /**
+   * Override a line item's amount. Updates the line, recomputes invoice totals,
+   * and writes an immutable before/after audit_log row — all in one tx. Actor is
+   * the verified staff token, never the body. Paid invoice -> 409.
+   */
   @Patch(':id/line-items/:lineId')
   override(
     @Param('id') invoiceId: string,
     @Param('lineId') lineId: string,
     @Body() body: OverrideLineItemDto,
-  ) {
-    return {
-      invoiceId,
-      lineItem: {
-        id: lineId,
-        amountCents: body.amountCents,
-        overridden: true,
-      },
-      audit: {
-        actor: 'staff_mock',
-        action: 'line_item.override',
-        before: { amountCents: 9000 },
-        after: { amountCents: body.amountCents },
-        reason: body.reason,
-        at: new Date().toISOString(),
-      },
-    };
+    @CurrentStaff() actor: string,
+  ): Promise<OverrideResult> {
+    return this.invoices.overrideLineItem(invoiceId, lineId, body, actor);
   }
 }

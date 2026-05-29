@@ -8,6 +8,7 @@ import { OpsCustomersController } from './customers.controller';
 import { OpsInvoicesController } from './ops-invoices.controller';
 import { CreditsService } from './credits.service';
 import { OpsCustomersService } from './ops-customers.service';
+import { OpsInvoicesService } from './ops-invoices.service';
 
 @Module({
   imports: [
@@ -15,6 +16,6 @@ import { OpsCustomersService } from './ops-customers.service';
     InvoicesModule,
   ],
   controllers: [OpsCustomersController, OpsInvoicesController],
-  providers: [OpsCustomersService, CreditsService],
+  providers: [OpsCustomersService, CreditsService, OpsInvoicesService],
 })
 export class OpsModule {}

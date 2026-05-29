@@ -47,6 +47,14 @@ export interface CreditResult {
   deduplicated: boolean;
 }
 
+export interface OverrideResult {
+  invoiceId: string;
+  lineItem: { id: string; amountCents: number; overridden: boolean };
+  /** Invoice totals after the override is folded in. */
+  subtotalCents: number;
+  totalCents: number;
+}
+
 export interface CreatedApiKey {
   id: string;
   customerId: string;
