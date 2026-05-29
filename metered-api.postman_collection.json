@@ -11,7 +11,7 @@
     { "key": "customer_id", "value": "", "type": "string", "description": "Set after creating/finding a customer" },
     { "key": "invoice_id", "value": "", "type": "string", "description": "Set after listing invoices" },
     { "key": "line_item_id", "value": "", "type": "string", "description": "Set after fetching invoice detail" },
-    { "key": "webhook_secret", "value": "dev-webhook-secret", "type": "string", "description": "Must match WEBHOOK_SIGNING_SECRET env var (default in docker-compose)" }
+    { "key": "webhook_secret", "value": "", "type": "string", "description": "Must match WEBHOOK_SIGNING_SECRET env var (default in docker-compose)" }
   ],
   "item": [
     {
