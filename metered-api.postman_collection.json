@@ -1,0 +1,387 @@
+{
+  "info": {
+    "name": "Metered API Demo",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Full demo walkthrough: create customer → ingest events → view usage → generate invoice → pay via webhook.\n\nSetup:\n1. Start the stack: `docker compose up` from repo root\n2. Run `npm run seed:demo` (apps/api) to populate demo data, or `npm run seed:dev` for a blank customer\n3. Run `npm run mint:staff` (apps/api) — paste the printed JWT into the `staff_token` collection variable\n4. Set `api_key` from a customer's key (returned by POST /ops/customers/:id/api-keys)"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000", "type": "string" },
+    { "key": "api_key", "value": "", "type": "string", "description": "Customer API key (X-API-Key header). Get from POST /ops/customers/:id/api-keys" },
+    { "key": "staff_token", "value": "", "type": "string", "description": "Staff JWT. Run: npm run mint:staff (apps/api)" },
+    { "key": "customer_id", "value": "", "type": "string", "description": "Set after creating/finding a customer" },
+    { "key": "invoice_id", "value": "", "type": "string", "description": "Set after listing invoices" },
+    { "key": "line_item_id", "value": "", "type": "string", "description": "Set after fetching invoice detail" },
+    { "key": "webhook_secret", "value": "dev-webhook-secret", "type": "string", "description": "Must match WEBHOOK_SIGNING_SECRET env var (default in docker-compose)" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] },
+            "description": "Liveness check. Expect 200 + `{ status: 'ok' }`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Ops — Staff",
+      "description": "All requests here require a staff JWT in Authorization: Bearer {{staff_token}}.\nGet one: `npm run mint:staff` from apps/api.",
+      "item": [
+        {
+          "name": "List customers",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{staff_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/ops/customers?limit=20&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["ops", "customers"],
+              "query": [
+                { "key": "limit", "value": "20" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get customer detail",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{staff_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/ops/customers/{{customer_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["ops", "customers", "{{customer_id}}"]
+            },
+            "description": "Returns recent usage windows, invoices, and anomaly signals for the customer."
+          }
+        },
+        {
+          "name": "Create customer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.id) pm.collectionVariables.set('customer_id', res.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{staff_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acme Corp\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/ops/customers",
+              "host": ["{{base_url}}"],
+              "path": ["ops", "customers"]
+            },
+            "description": "Auto-saves the returned `id` into the `customer_id` collection variable."
+          }
+        },
+        {
+          "name": "Create API key for customer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.plaintext) pm.collectionVariables.set('api_key', res.plaintext);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{staff_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/ops/customers/{{customer_id}}/api-keys",
+              "host": ["{{base_url}}"],
+              "path": ["ops", "customers", "{{customer_id}}", "api-keys"]
+            },
+            "description": "Plaintext key is in the response ONCE — store it. Auto-saved to `api_key` variable."
+          }
+        },
+        {
+          "name": "Issue credit",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{staff_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amountCents\": 1000,\n  \"reason\": \"Courtesy credit for downtime on 2026-05-01\",\n  \"idempotencyKey\": \"credit-demo-001\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/ops/customers/{{customer_id}}/credits",
+              "host": ["{{base_url}}"],
+              "path": ["ops", "customers", "{{customer_id}}", "credits"]
+            },
+            "description": "Idempotent on `idempotencyKey` — replay with the same key → no double credit. Change the key to issue a second credit."
+          }
+        },
+        {
+          "name": "Override invoice line item",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{staff_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amountCents\": 500,\n  \"reason\": \"Manual correction per support ticket #42\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/ops/invoices/{{invoice_id}}/line-items/{{line_item_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["ops", "invoices", "{{invoice_id}}", "line-items", "{{line_item_id}}"]
+            },
+            "description": "Updates the line amount, recomputes invoice totals, writes an immutable audit_log row. Returns 409 if invoice is already paid."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Customer API — v1",
+      "description": "All requests here require an API key in X-API-Key: {{api_key}}.\nGet one via POST /ops/customers/:id/api-keys (or run `npm run seed:dev` and copy the printed key).",
+      "item": [
+        {
+          "name": "GET /v1/me",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/v1/me",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "me"]
+            },
+            "description": "Returns `{ id, name }` for the authenticated customer. Used by the customer dashboard to display the account name in the header."
+          }
+        },
+        {
+          "name": "Ingest events (batch)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"requestId\": \"req_demo_001\",\n      \"endpoint\": \"/api/search\",\n      \"units\": 10,\n      \"timestamp\": \"2026-05-01T10:00:00Z\"\n    },\n    {\n      \"requestId\": \"req_demo_002\",\n      \"endpoint\": \"/api/search\",\n      \"units\": 25,\n      \"timestamp\": \"2026-05-01T10:05:00Z\"\n    },\n    {\n      \"requestId\": \"req_demo_003\",\n      \"endpoint\": \"/api/embed\",\n      \"units\": 100,\n      \"timestamp\": \"2026-05-01T10:07:00Z\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/events",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "events"]
+            },
+            "description": "202 response: `{ received, accepted, duplicates }`. Re-send the same body — `requestId` deduplication means accepted stays 0 on replay."
+          }
+        },
+        {
+          "name": "Ingest events (duplicate demo)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"requestId\": \"req_demo_001\",\n      \"endpoint\": \"/api/search\",\n      \"units\": 10,\n      \"timestamp\": \"2026-05-01T10:00:00Z\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/events",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "events"]
+            },
+            "description": "Sends req_demo_001 again. Response shows `{ received: 1, accepted: 0, duplicates: 1 }` — the dedup key holds."
+          }
+        },
+        {
+          "name": "Get usage windows",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/v1/usage?from=2026-05-01T00:00:00Z&to=2026-06-01T00:00:00Z&limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "usage"],
+              "query": [
+                { "key": "from", "value": "2026-05-01T00:00:00Z" },
+                { "key": "to", "value": "2026-06-01T00:00:00Z" },
+                { "key": "limit", "value": "50" }
+              ]
+            },
+            "description": "Hourly aggregation windows. `from`/`to` are optional ISO-8601 filters."
+          }
+        },
+        {
+          "name": "List invoices",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.items && res.items.length > 0) {",
+                  "  pm.collectionVariables.set('invoice_id', res.items[0].id);",
+                  "  console.log('invoice_id set to', res.items[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/v1/invoices?limit=10",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "invoices"],
+              "query": [{ "key": "limit", "value": "10" }]
+            },
+            "description": "Auto-saves the first invoice ID into `invoice_id` variable."
+          }
+        },
+        {
+          "name": "Get invoice detail",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.lineItems && res.lineItems.length > 0) {",
+                  "  pm.collectionVariables.set('line_item_id', res.lineItems[0].id);",
+                  "  console.log('line_item_id set to', res.lineItems[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/v1/invoices/{{invoice_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "invoices", "{{invoice_id}}"]
+            },
+            "description": "Auto-saves the first line item ID into `line_item_id`. Cross-tenant or unknown IDs return 404 (not 403)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "description": "HMAC-SHA256 of the raw JSON body (hex) in the `x-signature` header. The pre-request script computes and injects it automatically using `webhook_secret` collection variable.",
+      "item": [
+        {
+          "name": "Payment webhook — paid",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Compute HMAC-SHA256 over the raw body and inject x-signature.",
+                  "// Uses CryptoJS, which is built into the Postman sandbox.",
+                  "const body = pm.request.body.raw;",
+                  "const secret = pm.collectionVariables.get('webhook_secret');",
+                  "const sig = CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({ key: 'x-signature', value: sig });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-signature", "value": "computed-by-prerequest-script", "description": "Overwritten by pre-request script" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deliveryId\": \"del_demo_001\",\n  \"invoiceId\": \"{{invoice_id}}\",\n  \"status\": \"paid\",\n  \"amountCents\": 5000\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/webhooks/payments",
+              "host": ["{{base_url}}"],
+              "path": ["webhooks", "payments"]
+            },
+            "description": "Marks invoice as paid. Replay with the same `deliveryId` → `{ deduplicated: true }` and invoice stays paid exactly once."
+          }
+        },
+        {
+          "name": "Payment webhook — failed",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const body = pm.request.body.raw;",
+                  "const secret = pm.collectionVariables.get('webhook_secret');",
+                  "const sig = CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({ key: 'x-signature', value: sig });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-signature", "value": "computed-by-prerequest-script" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deliveryId\": \"del_demo_fail_001\",\n  \"invoiceId\": \"{{invoice_id}}\",\n  \"status\": \"failed\",\n  \"amountCents\": 5000\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/webhooks/payments",
+              "host": ["{{base_url}}"],
+              "path": ["webhooks", "payments"]
+            },
+            "description": "Records the failed payment in payment_events but does not change invoice status (invoice stays draft/issued)."
+          }
+        },
+        {
+          "name": "Payment webhook — bad signature (demo 401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-signature", "value": "deadbeefdeadbeefdeadbeefdeadbeef" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deliveryId\": \"del_demo_bad_001\",\n  \"invoiceId\": \"{{invoice_id}}\",\n  \"status\": \"paid\",\n  \"amountCents\": 5000\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/webhooks/payments",
+              "host": ["{{base_url}}"],
+              "path": ["webhooks", "payments"]
+            },
+            "description": "Intentionally wrong signature → 401. Shows the HMAC verification rejecting tampered payloads."
+          }
+        }
+      ]
+    }
+  ]
+}

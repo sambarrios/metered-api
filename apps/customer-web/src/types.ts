@@ -1,4 +1,9 @@
-// Mirrors the API response shapes (apps/api .../usage.dto.ts, invoice.types.ts).
+// Mirrors the API response shapes (apps/api .../usage.dto.ts, invoice.types.ts, account.controller.ts).
+
+export interface CustomerProfile {
+  id: string;
+  name: string;
+}
 
 export interface Page<T> {
   data: T[];

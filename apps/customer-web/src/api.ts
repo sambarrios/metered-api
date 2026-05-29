@@ -1,4 +1,4 @@
-import type { Invoice, Page, UsageWindow } from './types';
+import type { CustomerProfile, Invoice, Page, UsageWindow } from './types';
 
 // Empty base => same-origin relative paths (dev proxy forwards /v1 to the API).
 // Override with VITE_API_URL to point at the API directly (CORS is enabled).
@@ -43,6 +43,10 @@ async function get<T>(path: string): Promise<T> {
     throw new ApiError(res.status, `Request failed (${res.status})`);
   }
   return res.json() as Promise<T>;
+}
+
+export function fetchMe(): Promise<CustomerProfile> {
+  return get<CustomerProfile>('/v1/me');
 }
 
 export function fetchUsage(fromIso: string, toIso: string): Promise<Page<UsageWindow>> {

@@ -1,5 +1,5 @@
-import { useCallback, useState } from 'react';
-import { clearApiKey, getApiKey, setApiKey } from './api';
+import { useCallback, useEffect, useState } from 'react';
+import { clearApiKey, fetchMe, getApiKey, setApiKey } from './api';
 import { InvoiceDetail } from './components/InvoiceDetail';
 import { InvoiceList } from './components/InvoiceList';
 import { UsagePanel } from './components/UsagePanel';
@@ -8,6 +8,7 @@ type Tab = 'usage' | 'invoices';
 
 export function App() {
   const [hasKey, setHasKey] = useState<boolean>(() => getApiKey() !== null);
+  const [customerName, setCustomerName] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('usage');
   const [openInvoice, setOpenInvoice] = useState<string | null>(null);
 
@@ -15,7 +16,15 @@ export function App() {
   const handleAuthError = useCallback(() => {
     clearApiKey();
     setHasKey(false);
+    setCustomerName(null);
   }, []);
+
+  useEffect(() => {
+    if (!hasKey) return;
+    fetchMe()
+      .then((p) => setCustomerName(p.name))
+      .catch(() => {});
+  }, [hasKey]);
 
   if (!hasKey) {
     return <KeyGate onConnect={() => setHasKey(true)} />;
@@ -26,7 +35,7 @@ export function App() {
       <header className="app-header">
         <div>
           <h1>Metered</h1>
-          <div className="sub">Customer dashboard</div>
+          <div className="sub">{customerName ?? 'Customer dashboard'}</div>
         </div>
         <button
           className="link"
