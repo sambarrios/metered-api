@@ -74,23 +74,21 @@ The pipeline is event-driven, not scan-watermark: ingest enqueues the aggregatio
 
 ## API & UI craft
 
-**REST shape.** Resources, not RPC: `POST /v1/events`, `GET /v1/usage`, `GET /v1/invoices[/:id]`; `/ops/customers` (list/get/create, `:id/api-keys`, `:id/credits`), `PATCH /ops/invoices/:id/line-items/:lineId`; `POST /webhooks/payments`. Tenant scope is never a URL param on `/v1` — derived from the key — so there's no id to tamper with. A strict global `ValidationPipe` (`whitelist` + `forbidNonWhitelisted`) rejects unknown fields instead of ignoring them.
+**REST shape.** Resources, not RPC. Tenant scope on `/v1` is derived from the key — never a URL param, so there's no id to tamper with. A strict global `ValidationPipe` (`whitelist` + `forbidNonWhitelisted`) rejects unknown fields.
 
-**Pagination, with reasoning.** Lists take `limit` (default 50, cap 200) + `offset`, returning `{ data, page: { limit, offset, total } }`. Offset is the deliberate v1 choice: simple, gives the total the dashboards show, fine at this cardinality. Its honest limit — deep skips get linearly slower and can skip/repeat rows under concurrent insert — is why **keyset/cursor paging on `(event_ts, id)` is the documented scale path**. The 200 cap bounds worst-case query cost regardless.
+**Pagination.** `limit` (default 50, cap 200) + `offset` — simple, gives the dashboard total, fine at this cardinality. Honest limit: deep skips slow linearly and can skip/repeat rows under concurrent insert; keyset paging on `(event_ts, id)` is the documented scale path.
 
-**Money-moving UI, safe by design.** The credit modal mints one `idempotency_key` (`crypto.randomUUID`) per open and **reuses it across retries**, so a double-click credits exactly once (server dedupes); the key is shown for audit, submit disables in-flight, and `deduplicated: true` is surfaced honestly. The override modal — *not* idempotent — forces a confirm that **restates before → after** and requires a reason (both audited); a paid line is locked in-UI and a server 409 is surfaced if state changed underneath. Both consoles treat 401 as "clear creds, back to the gate." Amounts/dates are formatted client-side from the API's integer cents / ISO — **the SPA does no money math** beyond a dollars↔cents parse. Loading and error states are explicit on every fetch.
+**Money-moving UI.** The credit modal mints one `idempotency_key` per open, reused across retries — a double-click credits once, `deduplicated: true` surfaced honestly. The override modal forces a confirm restating before → after + a required reason (both audited); a paid line is locked in-UI and server 409 is surfaced if state changed underneath. The SPA does no money math beyond a dollars↔cents input parse.
 
 ## Operational thinking
 
-**Debugging a wrong invoice.** An operator works backward through three immutable layers. (1) `invoice_line_items` shows each tier's `units`, `rate_microdollars`, `amount_cents`, `overridden`. (2) If overridden, `audit_log` (by `entity_type='invoice'`, `entity_id`) holds the **before → after** pair, the `actor`, and the reason — fully reconstructable and attributable. (3) If the *generated* numbers look wrong, line units must equal the sum of `usage_windows` for the period; each window's `version` shows how often it re-aggregated, and since `recomputeWindow` is pure over `usage_events`, the operator re-runs it and diffs the stored window to prove whether the window or the raw events are at fault. Nothing in the chain can be silently rewritten.
+**Debugging a wrong invoice.** Work backward: (1) `invoice_line_items` shows each tier's units, rate, and amount. (2) If overridden, `audit_log` holds the before → after pair, actor, and reason. (3) If generated numbers look wrong, line units must equal the sum of `usage_windows` for the period; since `recomputeWindow` is pure over `usage_events`, re-running it and diffing the stored window proves where the fault is. Nothing in the chain can be silently rewritten.
 
-**Migration story.** `synchronize: false` — schema changes only via ordered hand-written migrations that carry what an ORM can't (CHECKs, the audit trigger, the partial dedupe index, the REVOKE note). `data-source.ts` is shared by app and CLI, so dev (ts-node) and prod (compiled JS, `migration:run:prod`) run identical migrations. The demo entrypoint runs them on boot (idempotent); production makes this a **gated deploy step / init job** before the new version takes traffic — never by hand, never via `synchronize`.
+**Migrations.** `synchronize: false` — schema changes only via hand-written migrations (CHECKs, the audit trigger, the partial dedupe index, `REVOKE`). `data-source.ts` is shared by app and CLI so dev and prod run identical migrations. Production: a gated pre-deploy step, never by hand.
 
-**What we'd alert on.** Ingest lag (`received_at − event_ts`) and aggregation lag (oldest pending `aggregate_window` job); queue depth + oldest-job age per type; jobs stuck `running` past the visibility timeout, and DLQ count; **invoice completeness** after the monthly run; webhook signature-failure rate (a spike = misconfigured or hostile sender); any `version` bump that changes a closed window's total. Structured logs keyed by the prefixed ids make a request or job traceable end to end.
+**Alerting.** Ingest lag (`received_at − event_ts`); aggregation lag (oldest pending job); queue depth + stuck-running count; invoice completeness after the monthly run; webhook signature-failure rate; `version` bumps on closed windows. Structured logs keyed by prefixed ids trace any request end to end. The anomaly flag (window ≥ 10× the customer's own 30-day hourly average) is an ops signal — honest weakness: a single large spike inflates the average it's measured against.
 
-The ops console flags a usage window when its units ≥ 10× the customer's *own* 30-day hourly average (a per-customer baseline, so a naturally high-volume tenant isn't falsely flagged). Honest weakness: the spike is included in the average it's compared against, so one large isolated spike among few windows pulls the mean up and can hide itself — a robust version uses median/MAD or a trailing baseline that excludes the window under test. It's a useful ops *signal*, not an alarm.
-
-## Two non-obvious decisions
+## Trade-offs: non-obvious decisions
 
 **1. Per-line rounding, not round-the-total-once.** Money is integer cents stored, integer microdollars (1e-6 USD) for sub-cent rates like $0.001 — no floats. Each line rounds to cents (half-up); the subtotal is the sum of line cents. *Rejected:* compute one exact grand total in microdollars and round once — arguably more accurate by a fraction of a cent, but it yields an invoice whose lines don't add up to its total. Chose per-line because **every line must be a real amount a customer can check by hand**; the sub-cent total discrepancy is the documented cost.
 
@@ -98,143 +96,39 @@ The ops console flags a usage window when its units ≥ 10× the customer's *own
 
 ## Testing
 
-Two tiers, split by what they prove. **Unit** (`npm test`, no DB) covers pure logic where a mock means something: money round-half-up + tiered-charge boundaries (incl. the documented 150k → $115.00), staff-JWT rejections (`alg=none`, RS↔HS confusion, tamper, expiry), id format/collision. **Integration** (`npm run test:int`, real throwaway Postgres, `--runInBand`) covers the boundaries the grade weights — where a mock would prove nothing because the guarantees *are* engine behavior: idempotent ingest replay, concurrent aggregator claiming disjoint jobs via `SKIP LOCKED`, double-credit → one credit + one audit row, cross-tenant read → 404, webhook 3× → one effect, tiered math + per-line rounding invariant, and `UPDATE`/`DELETE` on `audit_log` blocked by the trigger. The harness migrates a real `metered_test` DB and truncates between tests, wiring real services *without* the `@Cron` workers. Tests cover what breaks in production, not getters. Gap: no CI yet; the suite assumes a local Docker Postgres.
+Two tiers, split by what they prove.
+
+- **Unit** (`npm test`, no DB): pure logic — money round-half-up + tiered-charge boundaries (incl. 150k → $115.00), staff-JWT rejections (`alg=none`, RS↔HS confusion, tamper, expiry), id format/collision.
+- **Integration** (`npm run test:int`, real throwaway Postgres, `--runInBand`): engine guarantees a mock can't prove — idempotent ingest replay, concurrent aggregator claiming disjoint jobs via `SKIP LOCKED`, double-credit → one credit + one audit row, cross-tenant read → 404, webhook 3× → one effect, tiered math + per-line rounding invariant, `audit_log` UPDATE/DELETE blocked by trigger. The harness migrates a real `metered_test` DB and truncates between tests, wiring services without the `@Cron` workers.
+- **Gap**: no CI yet; assumes a local Docker Postgres.
 
 ## AWS deployment path
 
-The demo runs on `docker compose`; this section maps each concern to the AWS service and decision that would govern a real deployment.
+Infrastructure via **AWS CDK** — stacks for VPC, data (RDS + Secrets Manager), API (ECS + ALB), web (S3 + CloudFront), and alarms.
 
-### Infrastructure as code — AWS CDK
+**API:** ECS Fargate + ALB. Long-running cron workers rule out Lambda; the existing Docker image ships to ECR unchanged. ALB handles HTTPS termination and `/health` routing.
 
-All infrastructure lives in a single CDK app (`infra/`), split into focused stacks that compose per-environment:
+**UI:** `vite build` → S3 + CloudFront per SPA. SPA and API deploys are independent.
 
-```
-infra/
-  bin/app.ts          # instantiates stacks for each env (preprod / prod)
-  lib/
-    vpc-stack.ts      # VPC, public/private subnets, NAT, security groups
-    data-stack.ts     # RDS instance, Secrets Manager secrets, RDS Proxy
-    api-stack.ts      # ECS cluster, ALB, Fargate service, migration task def
-    web-stack.ts      # S3 buckets + CloudFront distributions for each SPA
-    alarms-stack.ts   # CloudWatch alarms, SNS topics, alert routing
-```
+**Database:** Aurora Serverless v2 for preprod (pauses when idle); RDS PostgreSQL Multi-AZ for prod (predictable IOPS for a billing workload). Migrations run as a gated ECS one-off task before each deploy.
 
-CDK is the right choice here: the stacks cross-reference each other's outputs (the data stack exports the DB secret ARN; the api stack imports it), and CDK Diff in CI makes infrastructure changes reviewable before they land — the same gate as code review.
+**Secrets:** AWS Secrets Manager per environment, injected into ECS task definitions by ARN — never in source control or env literals.
 
-### API hosting — ECS Fargate + ALB
+**Pipeline (GitHub Actions):** PR → lint + unit tests + CDK diff comment. Main merge → unit + integration tests (real Postgres service container in CI) → auto-deploy preprod → smoke test → manual approval → prod.
 
-The NestJS API runs as a Fargate service behind an Application Load Balancer. The existing Docker image (`apps/api/Dockerfile`) ships unchanged; ECS pulls it from ECR. Reasons:
+**Environments:** local (docker compose), preprod, prod — in separate AWS accounts or at minimum separate VPCs with distinct IAM boundaries. Isolated secrets and DB instances per environment.
 
-- **Long-running cron workers** (`AggregationWorker`, `InvoiceWorker`) rule out Lambda; a container service keeps them alive.
-- **ALB** handles HTTPS termination (ACM cert), health-check routing to `/health`, and scales across AZs.
-- **No public IP on tasks**: ECS tasks sit in private subnets; only the ALB is internet-facing. RDS sits in a separate private subnet group, reachable only from the ECS security group.
-- **RDS Proxy** sits between Fargate tasks and RDS, handling connection pooling at the AWS layer — replaces the PgBouncer call-out in the scaling section.
-
-At the 100× throughput wall (DESIGN.md §scaling), two changes map cleanly to AWS: front `POST /v1/events` with Kinesis Data Streams + a Lambda consumer for async persistence; swap the Postgres `jobs` table for SQS (same enqueue/claim contract, SQS visibility timeout replaces the stuck-running-job problem).
-
-### UI hosting — S3 + CloudFront
-
-Both SPAs (`customer-web`, `ops-web`) are static builds in production (`vite build` → `dist/`). Each gets:
-
-- An **S3 bucket** (private, no public access) for the built assets.
-- A **CloudFront distribution** in front of it (HTTPS, custom domain, edge caching).
-- `VITE_API_URL` set at build time to the ALB's HTTPS endpoint — same-origin proxy no longer needed once they're on separate origins with CORS enabled (already is).
-
-This decouples SPA deploys from API deploys: a frontend change doesn't restart the API container.
-
-### Database — Amazon RDS for PostgreSQL
-
-| Environment | Choice | Why |
-|---|---|---|
-| preprod | Aurora Serverless v2 (pause when idle) | Near-zero cost when no traffic; scales on demand during test runs |
-| prod | RDS PostgreSQL Multi-AZ (fixed instance) | Predictable IOPS for a billing workload; synchronous standby for failover |
-
-Migrations run as a **one-off ECS task** (`migration:run:prod`) using the same Docker image, triggered as a CodeBuild or GitHub Actions step *before* the rolling ECS deploy takes traffic. The entrypoint already does this for the demo; for production this becomes an explicit pre-deploy gate so the new schema is in place before any new API instance starts.
-
-The append-only `audit_log` trigger and the `REVOKE UPDATE/DELETE` note in the migration story both carry over unchanged — RDS doesn't remove them.
-
-### Secrets — AWS Secrets Manager
-
-Four secrets, one per environment:
-
-| Secret | Contains |
-|---|---|
-| `metered/{env}/db` | `DATABASE_URL` (injected by RDS Proxy auto-rotation) |
-| `metered/{env}/app` | `STAFF_JWT_SECRET`, `WEBHOOK_SIGNING_SECRET` |
-
-ECS task definitions reference secrets by ARN; the values are never in environment variable literals or source control. The Fargate task role gets a least-privilege `secretsmanager:GetSecretValue` policy scoped to those two ARNs — nothing broader.
-
-Local dev keeps the current `.env` / docker-compose defaults. `preprod` and `prod` each have their own secret versions, so a prod rotation never touches staging.
-
-### Deployment pipeline — GitHub Actions
-
-```
-on: pull_request  →  install · typecheck · lint · unit tests · cdk diff
-on: push(main)    →  install · typecheck · lint · unit tests · integration tests
-                       → deploy preprod (cdk deploy --require-approval never)
-                       → smoke test preprod (/health, one ingest round-trip)
-                       → manual approval gate
-                       → deploy prod
-```
-
-Integration tests run against a real Postgres in a GitHub Actions service container (`services: postgres:16`) — same pattern as the local harness, same `TEST_PG_*` env vars. No mocked DB in CI; the guarantees tested (`SKIP LOCKED`, the audit trigger, `ON CONFLICT` dedupe) are engine behavior, not mocks.
-
-CDK Diff posts as a PR comment so infra changes are visible alongside code changes before merge.
-
-### Git commit hooks — Husky
-
-Two hooks in `apps/api` (and equivalently in each SPA):
-
-| Hook | Runs | Why |
-|---|---|---|
-| `pre-commit` | `tsc --noEmit` + `eslint` | Catches type errors and lint before the commit lands; fast (~5s) |
-| `pre-push` | `npm test` (unit suite) | Blocks pushing broken logic; still fast enough to be non-annoying |
-
-Integration tests are *not* in a git hook — they need Postgres and take ~30s; CI catches them. The hook suite must stay fast enough that developers don't bypass it with `--no-verify`.
-
-Setup:
-```bash
-# from apps/api
-npm install --save-dev husky lint-staged
-npx husky init
-```
-
-### Multiple environments
-
-Three tiers, each fully isolated:
-
-| Tier | How | DB | Secrets |
-|---|---|---|---|
-| **local** | `docker compose up` (current) | Docker Postgres | `.env` / compose defaults |
-| **preprod** | AWS CDK stack `PreprodStack` | Aurora Serverless v2 | Secrets Manager `metered/preprod/*` |
-| **prod** | AWS CDK stack `ProdStack` | RDS Multi-AZ | Secrets Manager `metered/prod/*` |
-
-Preprod and prod live in separate AWS accounts (recommended) or at minimum separate VPCs with distinct IAM boundaries — so a misconfigured preprod deploy can't touch prod data. CDK environment parameters (`account`, `region`) select the target; the pipeline deploys to preprod first and requires manual approval to proceed to prod.
-
-Each environment gets its own ALB DNS name; CloudFront distributions have separate custom domains (`app.example.com` vs `staging-app.example.com`).
-
-### Alerting — CloudWatch + SNS
-
-The "what we'd alert on" list (§Operational thinking) maps directly to CloudWatch:
-
-| Signal | Mechanism |
-|---|---|
-| Ingest lag (`received_at − event_ts` p99) | Custom metric via CloudWatch EMF from the NestJS ingest path |
-| Agg queue depth + oldest-job age | Custom metric emitted by `AggregationWorker` each tick |
-| Jobs stuck `running` past visibility timeout | CloudWatch Alarm on `jobs_stuck_running` count > 0 |
-| Invoice completeness after monthly run | Custom metric: `invoices_missing` = customers with windows but no invoice for the period |
-| Webhook signature failure rate | Custom metric incremented in the HMAC guard; alarm on rate spike |
-| API error rate (5xx) | ALB `HTTPCode_Target_5XX_Count` metric — built-in, no instrumentation needed |
-| RDS storage / CPU / connections | RDS built-in CloudWatch metrics |
-
-All alarms publish to an **SNS topic**; subscribers:
-- **Slack**: AWS Chatbot integration posts to `#ops-alerts`.
-- **PagerDuty** (severity P1 only — stuck jobs, invoice completeness, sig failure spike): SNS → PagerDuty Events API v2 via Lambda or direct HTTPS subscription.
-
-Custom metrics are emitted via CloudWatch EMF (Embedded Metric Format) — structured JSON on stdout that the CloudWatch agent picks up from ECS log groups, no extra SDK calls needed. The prefixed ids (`cus_…`, `job_…`) go into every structured log line so a CloudWatch Insights query can trace a job or customer end-to-end.
+**Alerting:** CloudWatch custom metrics (ingest lag, queue depth, stuck jobs, invoice completeness, webhook sig failures) → SNS → Slack (all) + PagerDuty (P1: stuck jobs, completeness failures, sig spikes).
 
 ## What's built vs. next
 
-**Built:** the full pipeline with the job queue; tiered pricing on effective-dated plans; signed idempotent webhooks; staff JWT auth for `/ops` (HS256, algorithm-pinned, fail-closed); credits + line-item overrides with audit trail; append-only audit enforcement; per-customer anomaly flagging; two SPAs; two-tier tests.
+**Built:** 
+- The full pipeline with the job queue; tiered pricing on effective-dated plans; signed idempotent webhooks; staff JWT auth for `/ops` (HS256, algorithm-pinned, fail-closed); credits + line-item overrides with audit trail; append-only audit enforcement; per-customer anomaly flagging; two SPAs; two-tier tests.
 
-**Next, in order:** (1) **Close the credits-on-invoice loop** — credits are recorded but account-level (`invoice_id` NULL), not yet subtracted into `total_cents` at generation. (2) **Late-event adjustment for closed periods** — a frozen invoice's late events should become a next-period adjustment line or credit (the one design-only correctness gap). (3) **Job durability** — visibility-timeout reclaim, retry/backoff, dead-letter (failure mode #1). (4) **Real staff identity** — SSO/OIDC + RBAC + revocation, replacing the dev token-minting script. (5) **Observability + CI** — lag metrics, readiness probes, suites in CI against ephemeral Postgres.
+**Next:** 
+- **Close the credits-on-invoice loop** — credits are recorded but account-level (`invoice_id` NULL), not yet subtracted into `total_cents` at generation. 
+- **Late-event adjustment for closed periods** — a frozen invoice's late events should become a next-period adjustment line or credit (the one design-only correctness gap). 
+- **Job durability** — visibility-timeout reclaim, retry/backoff, dead-letter (failure mode #1). 
+- **Real staff identity** — SSO/OIDC + RBAC + revocation, replacing the dev token-minting script. 
+- **Observability + CI** — lag metrics, readiness probes, suites in CI against ephemeral Postgres.
+- **AWS Infra** — finalize AWS architecture, develop CDK (IaC) code, create secrets & deployment pipeline.
