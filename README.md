@@ -52,6 +52,11 @@ cd apps/api
 npm run seed:dev                 # create a demo customer + API key (printed once)
 npm run mint:staff -- you@ops    # mint a staff JWT for /ops + the ops console
 
+# richer demo fixtures — 5 customers, each exercising a distinct behaviour
+# (free tier, all-tier crossing, anomaly spike, a second plan, late/replayed events):
+npm run seed:demo                # seed customers/plans/keys + print per-customer next steps
+npm run seed:demo -- --traffic   # also drive each profile's usage through a running API
+
 # drive the whole pipeline with synthetic traffic:
 npm run gen:events -- --key <apiKey> --events 5000 --hours 24 --late 0.03 --replay
 #   --spike  concentrate a burst in one hour;  --replay  re-send a batch to show dedupe

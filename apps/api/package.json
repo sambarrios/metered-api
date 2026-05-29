@@ -19,6 +19,7 @@
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
     "seed:dev": "ts-node scripts/seed-dev.ts",
+    "seed:demo": "ts-node scripts/seed-demo.ts",
     "mint:staff": "ts-node scripts/mint-staff-token.ts",
     "gen:events": "ts-node scripts/generate-events.ts",
     "gen:invoice": "ts-node scripts/gen-invoice.ts"
