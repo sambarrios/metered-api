@@ -16,7 +16,8 @@
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
     "seed:dev": "ts-node scripts/seed-dev.ts",
-    "mint:staff": "ts-node scripts/mint-staff-token.ts"
+    "mint:staff": "ts-node scripts/mint-staff-token.ts",
+    "gen:events": "ts-node scripts/generate-events.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.0",
