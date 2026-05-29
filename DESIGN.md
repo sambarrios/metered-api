@@ -100,6 +100,139 @@ The ops console flags a usage window when its units ≥ 10× the customer's *own
 
 Two tiers, split by what they prove. **Unit** (`npm test`, no DB) covers pure logic where a mock means something: money round-half-up + tiered-charge boundaries (incl. the documented 150k → $115.00), staff-JWT rejections (`alg=none`, RS↔HS confusion, tamper, expiry), id format/collision. **Integration** (`npm run test:int`, real throwaway Postgres, `--runInBand`) covers the boundaries the grade weights — where a mock would prove nothing because the guarantees *are* engine behavior: idempotent ingest replay, concurrent aggregator claiming disjoint jobs via `SKIP LOCKED`, double-credit → one credit + one audit row, cross-tenant read → 404, webhook 3× → one effect, tiered math + per-line rounding invariant, and `UPDATE`/`DELETE` on `audit_log` blocked by the trigger. The harness migrates a real `metered_test` DB and truncates between tests, wiring real services *without* the `@Cron` workers. Tests cover what breaks in production, not getters. Gap: no CI yet; the suite assumes a local Docker Postgres.
 
+## AWS deployment path
+
+The demo runs on `docker compose`; this section maps each concern to the AWS service and decision that would govern a real deployment.
+
+### Infrastructure as code — AWS CDK
+
+All infrastructure lives in a single CDK app (`infra/`), split into focused stacks that compose per-environment:
+
+```
+infra/
+  bin/app.ts          # instantiates stacks for each env (preprod / prod)
+  lib/
+    vpc-stack.ts      # VPC, public/private subnets, NAT, security groups
+    data-stack.ts     # RDS instance, Secrets Manager secrets, RDS Proxy
+    api-stack.ts      # ECS cluster, ALB, Fargate service, migration task def
+    web-stack.ts      # S3 buckets + CloudFront distributions for each SPA
+    alarms-stack.ts   # CloudWatch alarms, SNS topics, alert routing
+```
+
+CDK is the right choice here: the stacks cross-reference each other's outputs (the data stack exports the DB secret ARN; the api stack imports it), and CDK Diff in CI makes infrastructure changes reviewable before they land — the same gate as code review.
+
+### API hosting — ECS Fargate + ALB
+
+The NestJS API runs as a Fargate service behind an Application Load Balancer. The existing Docker image (`apps/api/Dockerfile`) ships unchanged; ECS pulls it from ECR. Reasons:
+
+- **Long-running cron workers** (`AggregationWorker`, `InvoiceWorker`) rule out Lambda; a container service keeps them alive.
+- **ALB** handles HTTPS termination (ACM cert), health-check routing to `/health`, and scales across AZs.
+- **No public IP on tasks**: ECS tasks sit in private subnets; only the ALB is internet-facing. RDS sits in a separate private subnet group, reachable only from the ECS security group.
+- **RDS Proxy** sits between Fargate tasks and RDS, handling connection pooling at the AWS layer — replaces the PgBouncer call-out in the scaling section.
+
+At the 100× throughput wall (DESIGN.md §scaling), two changes map cleanly to AWS: front `POST /v1/events` with Kinesis Data Streams + a Lambda consumer for async persistence; swap the Postgres `jobs` table for SQS (same enqueue/claim contract, SQS visibility timeout replaces the stuck-running-job problem).
+
+### UI hosting — S3 + CloudFront
+
+Both SPAs (`customer-web`, `ops-web`) are static builds in production (`vite build` → `dist/`). Each gets:
+
+- An **S3 bucket** (private, no public access) for the built assets.
+- A **CloudFront distribution** in front of it (HTTPS, custom domain, edge caching).
+- `VITE_API_URL` set at build time to the ALB's HTTPS endpoint — same-origin proxy no longer needed once they're on separate origins with CORS enabled (already is).
+
+This decouples SPA deploys from API deploys: a frontend change doesn't restart the API container.
+
+### Database — Amazon RDS for PostgreSQL
+
+| Environment | Choice | Why |
+|---|---|---|
+| preprod | Aurora Serverless v2 (pause when idle) | Near-zero cost when no traffic; scales on demand during test runs |
+| prod | RDS PostgreSQL Multi-AZ (fixed instance) | Predictable IOPS for a billing workload; synchronous standby for failover |
+
+Migrations run as a **one-off ECS task** (`migration:run:prod`) using the same Docker image, triggered as a CodeBuild or GitHub Actions step *before* the rolling ECS deploy takes traffic. The entrypoint already does this for the demo; for production this becomes an explicit pre-deploy gate so the new schema is in place before any new API instance starts.
+
+The append-only `audit_log` trigger and the `REVOKE UPDATE/DELETE` note in the migration story both carry over unchanged — RDS doesn't remove them.
+
+### Secrets — AWS Secrets Manager
+
+Four secrets, one per environment:
+
+| Secret | Contains |
+|---|---|
+| `metered/{env}/db` | `DATABASE_URL` (injected by RDS Proxy auto-rotation) |
+| `metered/{env}/app` | `STAFF_JWT_SECRET`, `WEBHOOK_SIGNING_SECRET` |
+
+ECS task definitions reference secrets by ARN; the values are never in environment variable literals or source control. The Fargate task role gets a least-privilege `secretsmanager:GetSecretValue` policy scoped to those two ARNs — nothing broader.
+
+Local dev keeps the current `.env` / docker-compose defaults. `preprod` and `prod` each have their own secret versions, so a prod rotation never touches staging.
+
+### Deployment pipeline — GitHub Actions
+
+```
+on: pull_request  →  install · typecheck · lint · unit tests · cdk diff
+on: push(main)    →  install · typecheck · lint · unit tests · integration tests
+                       → deploy preprod (cdk deploy --require-approval never)
+                       → smoke test preprod (/health, one ingest round-trip)
+                       → manual approval gate
+                       → deploy prod
+```
+
+Integration tests run against a real Postgres in a GitHub Actions service container (`services: postgres:16`) — same pattern as the local harness, same `TEST_PG_*` env vars. No mocked DB in CI; the guarantees tested (`SKIP LOCKED`, the audit trigger, `ON CONFLICT` dedupe) are engine behavior, not mocks.
+
+CDK Diff posts as a PR comment so infra changes are visible alongside code changes before merge.
+
+### Git commit hooks — Husky
+
+Two hooks in `apps/api` (and equivalently in each SPA):
+
+| Hook | Runs | Why |
+|---|---|---|
+| `pre-commit` | `tsc --noEmit` + `eslint` | Catches type errors and lint before the commit lands; fast (~5s) |
+| `pre-push` | `npm test` (unit suite) | Blocks pushing broken logic; still fast enough to be non-annoying |
+
+Integration tests are *not* in a git hook — they need Postgres and take ~30s; CI catches them. The hook suite must stay fast enough that developers don't bypass it with `--no-verify`.
+
+Setup:
+```bash
+# from apps/api
+npm install --save-dev husky lint-staged
+npx husky init
+```
+
+### Multiple environments
+
+Three tiers, each fully isolated:
+
+| Tier | How | DB | Secrets |
+|---|---|---|---|
+| **local** | `docker compose up` (current) | Docker Postgres | `.env` / compose defaults |
+| **preprod** | AWS CDK stack `PreprodStack` | Aurora Serverless v2 | Secrets Manager `metered/preprod/*` |
+| **prod** | AWS CDK stack `ProdStack` | RDS Multi-AZ | Secrets Manager `metered/prod/*` |
+
+Preprod and prod live in separate AWS accounts (recommended) or at minimum separate VPCs with distinct IAM boundaries — so a misconfigured preprod deploy can't touch prod data. CDK environment parameters (`account`, `region`) select the target; the pipeline deploys to preprod first and requires manual approval to proceed to prod.
+
+Each environment gets its own ALB DNS name; CloudFront distributions have separate custom domains (`app.example.com` vs `staging-app.example.com`).
+
+### Alerting — CloudWatch + SNS
+
+The "what we'd alert on" list (§Operational thinking) maps directly to CloudWatch:
+
+| Signal | Mechanism |
+|---|---|
+| Ingest lag (`received_at − event_ts` p99) | Custom metric via CloudWatch EMF from the NestJS ingest path |
+| Agg queue depth + oldest-job age | Custom metric emitted by `AggregationWorker` each tick |
+| Jobs stuck `running` past visibility timeout | CloudWatch Alarm on `jobs_stuck_running` count > 0 |
+| Invoice completeness after monthly run | Custom metric: `invoices_missing` = customers with windows but no invoice for the period |
+| Webhook signature failure rate | Custom metric incremented in the HMAC guard; alarm on rate spike |
+| API error rate (5xx) | ALB `HTTPCode_Target_5XX_Count` metric — built-in, no instrumentation needed |
+| RDS storage / CPU / connections | RDS built-in CloudWatch metrics |
+
+All alarms publish to an **SNS topic**; subscribers:
+- **Slack**: AWS Chatbot integration posts to `#ops-alerts`.
+- **PagerDuty** (severity P1 only — stuck jobs, invoice completeness, sig failure spike): SNS → PagerDuty Events API v2 via Lambda or direct HTTPS subscription.
+
+Custom metrics are emitted via CloudWatch EMF (Embedded Metric Format) — structured JSON on stdout that the CloudWatch agent picks up from ECS log groups, no extra SDK calls needed. The prefixed ids (`cus_…`, `job_…`) go into every structured log line so a CloudWatch Insights query can trace a job or customer end-to-end.
+
 ## What's built vs. next
 
 **Built:** the full pipeline with the job queue; tiered pricing on effective-dated plans; signed idempotent webhooks; staff JWT auth for `/ops` (HS256, algorithm-pinned, fail-closed); credits + line-item overrides with audit trail; append-only audit enforcement; per-customer anomaly flagging; two SPAs; two-tier tests.
