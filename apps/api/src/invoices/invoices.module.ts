@@ -12,5 +12,7 @@ import { InvoicesController } from './invoices.controller';
   imports: [TypeOrmModule.forFeature([Invoice, InvoiceLineItem]), JobsModule],
   controllers: [InvoicesController],
   providers: [InvoiceGenerationService, InvoiceQueryService, InvoiceWorker],
+  // Ops customer-detail reuses the scoped invoice mapping.
+  exports: [InvoiceQueryService],
 })
 export class InvoicesModule {}
